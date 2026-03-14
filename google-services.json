@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "304486869625",
+    "project_id": "gotogo-daae1",
+    "storage_bucket": "gotogo-daae1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:304486869625:android:fd1ee7c97edc00e70902a8",
+        "android_client_info": {
+          "package_name": "com.anonymous.gotogo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCKygn1uJL5oYsNPwZvidwo20FeDvR6OEU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
