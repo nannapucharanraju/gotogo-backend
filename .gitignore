@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# environment secrets
+.env
+.env.*
+
+# logs
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+
+# service account keys / secrets
+*-firebase-adminsdk-*.json
+*.pem
+*.key
+
+# local configs
+android/local.properties
