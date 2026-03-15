@@ -841,53 +841,117 @@ app.patch("/rides/:id/book", authMiddleware, async (req, res) => {
 });
 
 app.post("/signup", async (req, res) => {
-  const { name, age, gender, phone, email, password } = req.body;
-
-  if (!name || !age || !gender || !phone || !email || !password) {
-    return res.status(400).json({
-      message: "All profile fields are required",
-    });
-  }
-
-  if (age < 18) {
-    return res.status(400).json({
-      message: "You must be at least 18 years old",
-    });
-  }
-
-  const existing = await User.findOne({ email });
-  if (existing) {
-    return res.status(400).json({ message: "User already exists" });
-  }
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const code = generateCode();
-
-  const user = new User({
-    name,
-    age,
-    gender,
-    phone,
-    email,
-    password: hashedPassword,
-    emailCode: code,
-    emailCodeExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 min
-  });
-
   try {
-    await user.save();
-    await sendEmail(
+    const { name, age, gender, phone, email, password } = req.body;
+
+    // Required fields
+    if (!name || !age || !gender || !phone || !email || !password) {
+      return res.status(400).json({
+        message: "All profile fields are required",
+      });
+    }
+
+    // Age restriction
+    if (Number(age) < 18) {
+      return res.status(400).json({
+        message: "You must be at least 18 years old",
+      });
+    }
+
+    // Indian phone validation
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(phone)) {
+      return res.status(400).json({
+        message: "Enter a valid 10 digit Indian phone number",
+      });
+    }
+
+    // Email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        message: "Enter a valid email address",
+      });
+    }
+
+    // Password rule
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    // Check existing user
+    const existing = await User.findOne({ email });
+
+    if (existing) {
+      // If user exists but not verified → resend code
+      if (!existing.emailVerified) {
+        const code = generateCode();
+
+        existing.emailCode = code;
+        existing.emailCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
+        await existing.save();
+
+        try {
+          await sendEmail(
+            email,
+            "GoToGo verification code",
+            `Your GoToGo verification code is ${code}. It expires in 10 minutes.`,
+          );
+        } catch (err) {
+          console.log("Email send failed:", err);
+        }
+
+        return res.json({
+          message: "Verification code resent. Check your email.",
+        });
+      }
+
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate verification code
+    const code = generateCode();
+
+    const user = new User({
+      name,
+      age,
+      gender,
+      phone,
       email,
-      "GoToGo verification code",
-      `Your GoToGo verification code is ${code}. It expires in 10 minutes.`,
-    );
+      password: hashedPassword,
+      emailCode: code,
+      emailCodeExpires: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    await user.save();
+
+    // Send email (non-blocking)
+    try {
+      await sendEmail(
+        email,
+        "GoToGo verification code",
+        `Your GoToGo verification code is ${code}. It expires in 10 minutes.`,
+      );
+    } catch (err) {
+      console.log("Email send failed:", err);
+    }
+
     res.json({
       message:
-        "Signup successful.Check your email for verification code dont forget to search in spam.",
+        "Signup successful. Check your email for the verification code (check spam if needed).",
     });
   } catch (err) {
-    res.status(400).json({ message: "Invalid profile data" });
+    console.error("Signup error:", err);
+    res.status(500).json({
+      message: "Signup failed. Please try again.",
+    });
   }
 });
 
