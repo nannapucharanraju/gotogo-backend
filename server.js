@@ -960,7 +960,7 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-import jwt from "jsonwebtoken"; // make sure this is imported
+
 
 app.post("/verify-email", async (req, res) => {
   const { email, code } = req.body;
