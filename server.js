@@ -568,6 +568,8 @@ app.get("/rides/search", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+
 app.get("/rides/:rideId/bookings", authMiddleware, async (req, res) => {
   const ride = await Ride.findById(req.params.rideId);
 
@@ -958,6 +960,8 @@ app.post("/signup", async (req, res) => {
   }
 });
 
+import jwt from "jsonwebtoken"; // make sure this is imported
+
 app.post("/verify-email", async (req, res) => {
   const { email, code } = req.body;
 
@@ -981,7 +985,18 @@ app.post("/verify-email", async (req, res) => {
 
   await user.save();
 
-  res.json({ message: "Email verified successfully" });
+  // ✅ generate token
+  const token = jwt.sign(
+    { userId: user._id },
+    process.env.JWT_SECRET,
+    { expiresIn: "180d" }
+  );
+
+  // ✅ send token
+  res.json({
+    message: "Email verified successfully",
+    token,
+  });
 });
 
 app.post("/resend-verification-code", async (req, res) => {
