@@ -75,7 +75,7 @@ mongoose
 
 async function sendNotification(pushToken, title, body) {
   try {
-    console.log("📤 Sending push to:", pushToken);
+    
 
     const response = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
@@ -91,7 +91,7 @@ async function sendNotification(pushToken, title, body) {
 
     const data = await response.json();
 
-    console.log("📬 Expo response:", data);
+    
   } catch (err) {
     console.error("❌ Push error:", err.message);
   }
@@ -284,14 +284,14 @@ const Booking = mongoose.model("Booking", BookingSchema);
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
-  console.log("AUTH HEADER:", authHeader);
+  
 
   if (!authHeader) {
     return res.status(401).json({ message: "No token provided" });
   }
 
   const token = authHeader.split(" ")[1];
-  console.log("TOKEN:", token);
+ 
 
   if (!token) {
     return res.status(401).json({ message: "Invalid token format" });
@@ -299,7 +299,7 @@ function authMiddleware(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log("DECODED:", decoded);
+    
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -315,8 +315,7 @@ app.get("/me", authMiddleware, async (req, res) => {
 
 app.put("/me", authMiddleware, upload.single("avatar"), async (req, res) => {
   try {
-    console.log("BODY:", req.body);
-    console.log("FILE:", req.file);
+
 
     const { name, age, gender } = req.body;
 
@@ -517,7 +516,7 @@ app.get("/rides", async (req, res) => {
 
 app.get("/rides/search", async (req, res) => {
   console.log("🔥 SEARCH ROUTE HIT");
-  console.log("QUERY PARAMS:", req.query);
+  
   try {
     const { from, to, date } = req.query;
 
@@ -1141,9 +1140,7 @@ app.post("/check-user", async (req, res) => {
 // add a ride
 app.post("/rides", authMiddleware, async (req, res) => {
   console.log("👉 POST /rides HIT");
-  console.log("👉 BODY:", req.body);
-  console.log("👉 USER:", req.userId);
-
+  
   try {
     // 🔐 Check verification before allowing ride creation
     const latestVerification = await UserVerification.findOne({
@@ -1223,7 +1220,7 @@ app.post("/rides", authMiddleware, async (req, res) => {
 
     // Get user who created ride
     const user = await User.findById(req.userId);
-    console.log("USER PUSH TOKEN:", user?.pushToken);
+    
 
     // Send notification
     if (user?.pushToken) {
