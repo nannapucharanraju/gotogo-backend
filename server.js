@@ -1297,7 +1297,7 @@ app.patch("/admin/verifications/:id", authMiddleware, async (req, res) => {
 
     const { status, rejectionReason } = req.body;
 
-    if (!["approved", "rejected"].includes(status)) {
+    if (!["verified", "rejected"].includes(status)) {
       return res.status(400).json({ message: "Invalid status value" });
     }
 
@@ -1326,6 +1326,10 @@ app.patch("/admin/verifications/:id", authMiddleware, async (req, res) => {
     }
 
     await verification.save();
+
+    await User.findByIdAndUpdate(verification.userId, {
+  verificationStatus: verification.status,
+});
 
     res.json({ message: "Verification updated successfully" });
   } catch (err) {
@@ -1383,7 +1387,7 @@ app.patch(
         return res.status(404).json({ message: "Verification not found" });
       }
 
-      verification.status = "approved";
+      verification.status = "verified";
       verification.rejectionReason = undefined;
 
       await verification.save();
