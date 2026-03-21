@@ -1327,9 +1327,7 @@ app.patch("/admin/verifications/:id", authMiddleware, async (req, res) => {
 
     await verification.save();
 
-    await User.findByIdAndUpdate(verification.userId, {
-  verificationStatus: verification.status,
-});
+   
 
     res.json({ message: "Verification updated successfully" });
   } catch (err) {
