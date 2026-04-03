@@ -1,16 +1,26 @@
-require("dotenv").config();
-const express = require("express");
-const app = express();
-const cors = require("cors");
-const sendEmail = require("./utils/email");
-const fetch = (...args) =>
-  import("node-fetch").then(({ default: fetch }) => fetch(...args));
+import dotenv from "dotenv";
+dotenv.config();
 
-const cloudinary = require("cloudinary").v2;
-const multer = require("multer");
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
-const UserVerification = require("./models/userverification");
-cloudinary.config({
+import express from "express";
+import cors from "cors";
+
+const app = express();
+
+// ✅ FIXED imports
+import sendEmail from "./utils/email.js";
+import fetch from "node-fetch";
+import Vehicle from "./models/Vehicle.js";
+
+import cloudinary from "cloudinary";
+import multer from "multer";
+import { CloudinaryStorage } from "multer-storage-cloudinary";
+import UserVerification from "./models/userverification.js";
+import Rating from "./models/Rating.js";
+
+// cloudinary v2
+const { v2: cloudinaryV2 } = cloudinary;
+
+cloudinaryV2.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
@@ -56,7 +66,7 @@ async function geocode(place) {
   };
 }
 
-async function getDistanceKm(from, to) {
+async function getRouteDistanceKm(from, to) {
   const url = `http://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
   const res = await fetch(url);
   const data = await res.json();
@@ -66,7 +76,7 @@ async function getDistanceKm(from, to) {
   return (data.routes[0].distance / 1000).toFixed(1); // km
 }
 
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 mongoose
   .connect(process.env.MONGO_URI)
@@ -97,6 +107,20 @@ async function sendNotification(pushToken, title, body) {
   }
 }
 
+function getDistanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) ** 2;
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 const UserSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -108,7 +132,7 @@ const UserSchema = new mongoose.Schema({
   },
   gender: {
     type: String,
-    enum: ["Male", "Female", "Other"],
+    enum: ["Male", "Female", "Other","male", "female"],
     required: true,
   },
   phone: {
@@ -136,6 +160,12 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: "",
   },
+
+  avgDriverRating: { type: Number, default: 0 },
+totalDriverRatings: { type: Number, default: 0 },
+
+avgPassengerRating: { type: Number, default: 0 },
+totalPassengerRatings: { type: Number, default: 0 },
 
   verificationStatus: {
     type: String,
@@ -183,9 +213,8 @@ app.get("/", (req, res) => {
 
 app.use(cors());
 app.use(express.json());
-
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 
 const RideSchema = new mongoose.Schema(
   {
@@ -225,16 +254,11 @@ const RideSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-
-    vehicleModel: {
-      type: String,
-      required: true,
-    },
-
-    vehicleNumber: {
-      type: String,
-      required: true,
-    },
+vehicleId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Vehicle",
+    required: true
+  },
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -428,13 +452,15 @@ app.post(
 app.get("/my-bookings", authMiddleware, async (req, res) => {
   const bookings = await Booking.find({
     passengerId: req.userId,
-  }).populate({
-    path: "rideId",
-    populate: {
-      path: "createdBy",
-      select: "name age gender phone",
-    },
-  });
+  })
+    .sort({ createdAt: -1 }) // 🔥 newest bookings first
+    .populate({
+      path: "rideId",
+      populate: {
+        path: "createdBy",
+        select: "name age gender phone",
+      },
+    });
 
   res.json(bookings);
 });
@@ -474,8 +500,8 @@ app.get("/bookings/:bookingId/driver", authMiddleware, async (req, res) => {
         name: driver.name,
         age: driver.age,
         gender: driver.gender,
-        vehicleModel: booking.rideId.vehicleModel,
-        vehicleNumber: booking.rideId.vehicleNumber,
+        vehicleModel: booking.rideId.vehicleId.model,
+vehicleNumber: booking.rideId.vehicleId.number,
       });
     }
 
@@ -485,8 +511,8 @@ app.get("/bookings/:bookingId/driver", authMiddleware, async (req, res) => {
       age: driver.age,
       gender: driver.gender,
       phone: driver.phone,
-      vehicleModel: booking.rideId.vehicleModel,
-      vehicleNumber: booking.rideId.vehicleNumber,
+      vehicleModel: booking.rideId.vehicleId.model,
+vehicleNumber: booking.rideId.vehicleId.number,
     });
   } catch (err) {
     console.error("VIEW DRIVER API ERROR:", err);
@@ -504,9 +530,12 @@ app.get("/rides", async (req, res) => {
   console.log("🔥 FILTERED RIDES ROUTE HIT");
   try {
     const rides = await Ride.find({
-      departureTime: { $gt: new Date() }, // 🔥 Only future rides
-      isCancelled: false, // 🔥 Hide cancelled
-    }).sort({ departureTime: 1 });
+  departureTime: { $gt: new Date() },
+  isCancelled: false,
+})
+  .populate("vehicleId")
+  .populate("createdBy", "name avatar verificationStatus")
+  .sort({ departureTime: 1 });
 
     res.json(rides);
   } catch (err) {
@@ -518,13 +547,12 @@ app.get("/rides/search", async (req, res) => {
   console.log("🔥 SEARCH ROUTE HIT");
   
   try {
-    const { from, to, date } = req.query;
-
-    if (!from || !to || !date) {
-      return res.status(400).json({
-        message: "from, to and date are required",
-      });
-    }
+    const { fromLat, fromLng, toLat, toLng, date } = req.query;
+if (!fromLat || !fromLng || !toLat || !toLng || !date) {
+  return res.status(400).json({
+    message: "coordinates and date are required",
+  });
+}
 
     const selectedDate = new Date(date);
 
@@ -555,13 +583,34 @@ app.get("/rides/search", async (req, res) => {
     const rides = await Ride.find({
       isCancelled: false,
       departureTime: timeFilter,
-      from: { $regex: `^${from}$`, $options: "i" },
-      to: { $regex: `^${to}$`, $options: "i" },
     })
       .populate("createdBy", "name avatar verificationStatus")
+      .populate("vehicleId")
       .sort({ departureTime: 1 });
 
-    res.json(rides);
+      const MAX_DISTANCE_KM = 15;
+
+const filteredRides = rides.filter((ride) => {
+  const fromMatch =
+    getDistanceKm(
+      Number(fromLat),
+      Number(fromLng),
+      ride.fromLat,
+      ride.fromLng
+    ) <= MAX_DISTANCE_KM;
+
+  const toMatch =
+    getDistanceKm(
+      Number(toLat),
+      Number(toLng),
+      ride.toLat,
+      ride.toLng
+    ) <= MAX_DISTANCE_KM;
+
+  return fromMatch && toMatch;
+});
+
+    res.json(filteredRides);
   } catch (err) {
     console.error("SEARCH ERROR FULL:", err);
     res.status(500).json({ message: err.message });
@@ -594,8 +643,8 @@ app.get("/rides/:id", async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id).populate(
       "createdBy",
-      "name age gender avatar",
-    );
+      "name age gender avatar",)
+    .populate("vehicleId");
 
     if (!ride) {
       return res.status(404).json({ message: "Ride not found" });
@@ -612,8 +661,8 @@ app.get("/rides/:id", async (req, res) => {
 app.get("/rides/:id/driver-preview", authMiddleware, async (req, res) => {
   const ride = await Ride.findById(req.params.id).populate(
     "createdBy",
-    "name age gender",
-  );
+    "name age gender",)
+  .populate("vehicleId");;
 
   if (!ride) {
     return res.status(404).json({ message: "Ride not found" });
@@ -623,8 +672,8 @@ app.get("/rides/:id/driver-preview", authMiddleware, async (req, res) => {
     name: ride.createdBy.name,
     age: ride.createdBy.age,
     gender: ride.createdBy.gender,
-    vehicleModel: ride.vehicleModel,
-    vehicleNumber: ride.vehicleNumber,
+    vehicleModel: ride.vehicleId.model,
+vehicleNumber: ride.vehicleId.number,
   });
 });
 
@@ -657,8 +706,8 @@ app.get("/rides/:rideId/driver", authMiddleware, async (req, res) => {
     age: driver.age,
     gender: driver.gender,
     phone: driver.phone,
-    vehicleModel: booking.rideId.vehicleModel,
-    vehicleNumber: booking.rideId.vehicleNumber,
+    vehicleModel: booking.rideId.vehicleId.model,
+vehicleNumber: booking.rideId.vehicleId.number,
   });
 });
 
@@ -844,6 +893,338 @@ app.patch("/rides/:id/book", authMiddleware, async (req, res) => {
   }
 });
 
+app.post("/ratings", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { bookingId, rating, review } = req.body;
+
+   
+    // 1. Validate input
+    if (!bookingId || !rating) {
+      console.log("❌ Missing fields");
+      return res.status(400).json({ message: "Missing fields" });
+    }
+
+    if (rating < 1 || rating > 5) {
+      console.log("❌ Invalid rating value:", rating);
+      return res.status(400).json({ message: "Invalid rating value" });
+    }
+
+    // 2. Get booking
+    const booking = await Booking.findById(bookingId);
+    console.log("📦 Booking:", booking);
+
+    if (!booking) {
+      console.log("❌ Booking not found");
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    // 3. Check ownership
+    if (booking.passengerId.toString() !== userId) {
+      console.log("❌ Not your booking");
+      return res.status(403).json({ message: "Not your booking" });
+    }
+
+    // 4. Check status
+    console.log("📌 Booking status:", booking.status);
+
+    //if (booking.status !== "completed") {
+      //console.log("❌ Invalid booking status");
+     // return res.status(400).json({ message: "Invalid booking status" });
+    //}
+
+    // 5. Get ride
+    const ride = await Ride.findById(booking.rideId);
+    console.log("🚗 Ride:", ride);
+
+    if (!ride) {
+      console.log("❌ Ride not found");
+      return res.status(404).json({ message: "Ride not found" });
+    }
+
+    // 6. Check ride completion (time)
+    const now = new Date();
+    console.log("⏱ Now:", now);
+    console.log("⏱ Arrival:", ride.arrivalTime);
+
+    if (new Date(ride.arrivalTime) > now) {
+      console.log("❌ Ride not completed yet");
+      return res.status(400).json({ message: "Ride not completed yet" });
+    }
+
+    // 7. Prevent duplicate
+    const existing = await Rating.findOne({
+      bookingId,
+      fromUserId: userId,
+    });
+
+    if (existing) {
+      console.log("❌ Already rated");
+      return res.status(400).json({ message: "Already rated" });
+    }
+
+    // 8. Create rating
+    const newRating = await Rating.create({
+      bookingId,
+      rideId: ride._id,
+      fromUserId: userId,
+      toUserId: ride.createdBy,
+      role: "passenger_to_driver",
+      rating,
+      review,
+    });
+
+    console.log("✅ Rating created:", newRating._id);
+
+    // 9. Update driver stats
+    const driver = await User.findById(ride.createdBy);
+
+    if (!driver) {
+      console.log("❌ Driver not found");
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    const oldCount = driver.totalDriverRatings || 0;
+    const oldAvg = driver.avgDriverRating || 0;
+    const newCount = oldCount + 1;
+
+    driver.avgDriverRating =
+      (oldAvg * oldCount + rating) / newCount;
+
+    driver.totalDriverRatings = newCount;
+
+    await driver.save();
+
+    console.log("✅ Driver stats updated:", {
+      avg: driver.avgDriverRating,
+      total: driver.totalDriverRatings,
+    });
+
+    return res.json({
+      message: "Driver rated successfully",
+      data: newRating,
+    });
+
+  } catch (err) {
+    console.error("🔥 RATING ERROR:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+});
+
+app.post("/ratings/passenger", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId; // driver
+    const { bookingId, rating, review } = req.body;
+
+    console.log("👉 /ratings/passenger HIT");
+    console.log("USER (driver):", userId);
+    console.log("BODY:", { bookingId, rating, review });
+
+    // 1. Validate input
+    if (!bookingId || !rating) {
+      console.log("❌ Missing fields");
+      return res.status(400).json({ message: "Missing fields" });
+    }
+
+    if (rating < 1 || rating > 5) {
+      console.log("❌ Invalid rating value:", rating);
+      return res.status(400).json({ message: "Invalid rating value" });
+    }
+
+    // 2. Get booking
+    const booking = await Booking.findById(bookingId);
+    console.log("📦 Booking:", booking);
+
+    if (!booking) {
+      console.log("❌ Booking not found");
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    // 3. Get ride
+    const ride = await Ride.findById(booking.rideId);
+    console.log("🚗 Ride:", ride);
+
+    if (!ride) {
+      console.log("❌ Ride not found");
+      return res.status(404).json({ message: "Ride not found" });
+    }
+
+    // 4. Check driver ownership
+    if (ride.createdBy.toString() !== userId) {
+      console.log("❌ Not your ride");
+      return res.status(403).json({ message: "Not your ride" });
+    }
+
+    // 5. Check booking status
+    console.log("📌 Booking status:", booking.status);
+
+    //if (booking.status !== "completed") {
+      //console.log("❌ Invalid booking status");
+      //return res.status(400).json({ message: "Invalid booking status" });
+    //}
+
+    // 6. Check ride completion (time)
+    const now = new Date();
+    console.log("⏱ Now:", now);
+    console.log("⏱ Arrival:", ride.arrivalTime);
+
+    if (new Date(ride.arrivalTime) > now) {
+      console.log("❌ Ride not completed yet");
+      return res.status(400).json({ message: "Ride not completed yet" });
+    }
+
+    // 7. Prevent duplicate
+    const existing = await Rating.findOne({
+      bookingId,
+      fromUserId: userId,
+    });
+
+    if (existing) {
+      console.log("❌ Already rated");
+      return res.status(400).json({ message: "Already rated" });
+    }
+
+    // 8. Create rating
+    const newRating = await Rating.create({
+      bookingId,
+      rideId: ride._id,
+      fromUserId: userId,
+      toUserId: booking.passengerId,
+      role: "driver_to_passenger",
+      rating,
+      review,
+    });
+
+    console.log("✅ Rating created:", newRating._id);
+
+    // 9. Update passenger stats
+    const passenger = await User.findById(booking.passengerId);
+
+    if (!passenger) {
+      console.log("❌ Passenger not found");
+      return res.status(404).json({ message: "Passenger not found" });
+    }
+
+    const oldCount = passenger.totalPassengerRatings || 0;
+    const oldAvg = passenger.avgPassengerRating || 0;
+    const newCount = oldCount + 1;
+
+    passenger.avgPassengerRating =
+      (oldAvg * oldCount + rating) / newCount;
+
+    passenger.totalPassengerRatings = newCount;
+
+    await passenger.save();
+
+    console.log("✅ Passenger stats updated:", {
+      avg: passenger.avgPassengerRating,
+      total: passenger.totalPassengerRatings,
+    });
+
+    return res.json({
+      message: "Passenger rated successfully",
+      data: newRating,
+    });
+
+  } catch (err) {
+    console.error("🔥 DRIVER RATING ERROR:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+});
+
+app.get("/users/:userId/ratings", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { role } = req.query;
+
+    console.log("👉 GET /users/:userId/ratings HIT");
+    console.log("USER ID:", userId);
+
+    // 1. Validate user
+    const user = await User.findById(userId);
+    if (!user) {
+      console.log("❌ User not found");
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // 2. Build filter
+    const filter = { toUserId: user._id };
+    if (role) filter.role = role;
+
+    console.log("🔍 Filter:", filter);
+
+    // 3. Get ratings list
+    const ratings = await Rating.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .populate("fromUserId", "name avatar");
+
+    console.log("⭐ Ratings count:", ratings.length);
+
+    // 4. Calculate DRIVER rating (passenger → driver)
+    const driverStats = await Rating.aggregate([
+      {
+        $match: {
+          toUserId: user._id,
+          role: "passenger_to_driver",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          avg: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // 5. Calculate PASSENGER rating (driver → passenger)
+    const passengerStats = await Rating.aggregate([
+      {
+        $match: {
+          toUserId: user._id,
+          role: "driver_to_passenger",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          avg: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // 6. Final response
+    const response = {
+      avgDriverRating: driverStats[0]?.avg || 0,
+      totalDriverRatings: driverStats[0]?.count || 0,
+
+      avgPassengerRating: passengerStats[0]?.avg || 0,
+      totalPassengerRatings: passengerStats[0]?.count || 0,
+
+      ratings,
+    };
+
+    console.log("📤 Response:", response);
+
+    return res.json(response);
+
+  } catch (err) {
+    console.error("🔥 GET RATINGS ERROR:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+});
+
 app.post("/signup", async (req, res) => {
   try {
     const { name, age, gender, phone, email, password } = req.body;
@@ -851,14 +1232,14 @@ app.post("/signup", async (req, res) => {
     // Required fields
     if (!name || !age || !gender || !phone || !email || !password) {
       return res.status(400).json({
-        message: "All profile fields are required",
+        message: "Please fill in all required fields",
       });
     }
 
     // Age restriction
     if (Number(age) < 18) {
       return res.status(400).json({
-        message: "You must be at least 18 years old",
+        message: "You need to be at least 18 years old to sign up",
       });
     }
 
@@ -866,7 +1247,7 @@ app.post("/signup", async (req, res) => {
     const phoneRegex = /^[6-9]\d{9}$/;
     if (!phoneRegex.test(phone)) {
       return res.status(400).json({
-        message: "Enter a valid 10 digit Indian phone number",
+        message: "Enter a valid 10-digit Indian phone number",
       });
     }
 
@@ -874,14 +1255,14 @@ app.post("/signup", async (req, res) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({
-        message: "Enter a valid email address",
+        message: "That email doesn’t look right",
       });
     }
 
     // Password rule
     if (password.length < 6) {
       return res.status(400).json({
-        message: "Password must be at least 6 characters",
+        message: "Password should be at least 6 characters long",
       });
     }
 
@@ -908,12 +1289,12 @@ app.post("/signup", async (req, res) => {
         }
 
         return res.json({
-          message: "Verification code resent. Check your email.",
+          message: "You already signed up. We’ve sent a new verification code—check your email.",
         });
       }
 
       return res.status(400).json({
-        message: "User already exists",
+        message: "An account with this email already exists",
       });
     }
 
@@ -949,12 +1330,12 @@ app.post("/signup", async (req, res) => {
 
     res.json({
       message:
-        "Signup successful. Check your email for the verification code (check spam if needed).",
+        "Account created. Check your email for the verification code (don’t forget to check spam).",
     });
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
-      message: "Signup failed. Please try again.",
+      message: "Something went wrong while signing up. Please try again.",
     });
   }
 });
@@ -1105,24 +1486,33 @@ app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   const user = await User.findOne({ email });
+
   if (!user) {
-    return res.status(401).json({ message: "Invalid credentials" });
+    return res.status(401).json({
+      message: "No account found with this email",
+    });
   }
-
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) {
-    return res.status(401).json({ message: "Invalid credentials" });
-  }
-
-  const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-    expiresIn: "180d",
-  });
 
   if (!user.emailVerified) {
     return res.status(403).json({
-      message: "Please verify your email first",
+      message: "Please verify your email before logging in",
     });
   }
+
+  const match = await bcrypt.compare(password, user.password);
+
+  if (!match) {
+    return res.status(401).json({
+      message: "Incorrect password. Try again",
+    });
+  }
+
+  const token = jwt.sign(
+    { userId: user._id },
+    process.env.JWT_SECRET,
+    { expiresIn: "180d" }
+  );
+
   res.json({ token });
 });
 
@@ -1159,6 +1549,8 @@ app.post("/rides", authMiddleware, async (req, res) => {
       });
     }
 
+
+
     // If pending or approved → continue
     const {
       from,
@@ -1172,9 +1564,14 @@ app.post("/rides", authMiddleware, async (req, res) => {
       arrivalTime,
       seats,
       price,
-      vehicleModel,
-      vehicleNumber,
+      vehicleId,
     } = req.body;
+
+    const vehicle = await Vehicle.findById(vehicleId);
+
+if (!vehicle || vehicle.userId.toString() !== req.userId) {
+  return res.status(400).json({ message: "Invalid vehicle" });
+}
 
     // 🔒 Validate coords (this prevents NaN map crashes later)
     if (
@@ -1211,8 +1608,7 @@ app.post("/rides", authMiddleware, async (req, res) => {
       arrivalTime,
       seats,
       price,
-      vehicleModel,
-      vehicleNumber,
+      vehicleId,
       createdBy: req.userId,
     });
 
@@ -1398,6 +1794,65 @@ app.patch(
   },
 );
 
+app.post("/vehicles", authMiddleware, async (req, res) => {
+  try {
+    const { type, number, manufacturer, model } = req.body;
+
+    const cleanNumber = number.toUpperCase().trim();
+    const vehicleRegex = /^[A-Z0-9 ]+$/;
+
+    if (!type || !cleanNumber || !manufacturer || !model) {
+      return res.status(400).json({ message: "All fields required" });
+    }
+
+    if (!vehicleRegex.test(cleanNumber) || cleanNumber.length < 5) {
+      return res.status(400).json({ message: "Invalid vehicle number" });
+    }
+
+    const vehicle = new Vehicle({
+      userId: req.userId,
+      type,
+      manufacturer,
+      model,
+      number: cleanNumber,
+    });
+
+    await vehicle.save();
+
+    res.status(201).json(vehicle);
+  } catch (err) {
+    console.log("❌ VEHICLE ERROR:", err); // 👈 ADD THIS
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.get("/vehicles", authMiddleware, async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({ userId: req.userId });
+    res.json(vehicles);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.delete("/vehicles/:id", authMiddleware, async (req, res) => {
+  try {
+    const vehicle = await Vehicle.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.userId, // 🔐 only delete your own vehicle
+    });
+
+    if (!vehicle) {
+      return res.status(404).json({ message: "Vehicle not found" });
+    }
+
+    res.json({ message: "Vehicle removed" });
+  } catch (err) {
+    console.log("DELETE ERROR:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 app.patch(
   "/api/admin/verification/:id/reject",
   authMiddleware,
@@ -1441,6 +1896,33 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     message: "Something broke",
   });
+});
+
+app.post("/admin/send-notification", async (req, res) => {
+  try {
+    const { title, body } = req.body;
+
+    const users = await User.find({
+      pushToken: { $exists: true, $ne: null },
+    });
+
+    const tokens = users.map((u) => u.pushToken);
+
+    if (!tokens.length) {
+      return res.json({ message: "No users found" });
+    }
+
+    const response = await sendPushNotification(tokens, title, body);
+
+    res.json({
+      message: "Notification sent",
+      success: response.successCount,
+      failed: response.failureCount,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to send notification" });
+  }
 });
 
 app.get("/health", (req, res) => {

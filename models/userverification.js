@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const UserVerificationSchema = new mongoose.Schema(
   {
@@ -32,7 +32,7 @@ const UserVerificationSchema = new mongoose.Schema(
       type: Date,
     },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
 UserVerificationSchema.post("save", async function (doc) {
@@ -49,5 +49,9 @@ UserVerificationSchema.post("save", async function (doc) {
   }
 });
 
+const UserVerification = mongoose.model(
+  "UserVerification",
+  UserVerificationSchema
+);
 
-module.exports = mongoose.model("UserVerification", UserVerificationSchema);
+export default UserVerification;

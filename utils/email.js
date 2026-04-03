@@ -1,20 +1,27 @@
-const { Resend } = require("resend");
+import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resend;
+
+function getResend() {
+  if (!resend) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+}
 
 async function sendEmail(to, subject, text) {
   try {
-    await resend.emails.send({
-      from: "GoToGo <hello@gotogocar.com>",
-      to: to,
-      subject: subject,
-      text: text,
-    });
+    const resendClient = getResend();
 
-    
+    await resendClient.emails.send({
+      from: "GoToGo <hello@gotogocar.com>",
+      to,
+      subject,
+      text,
+    });
   } catch (err) {
     console.error("Email send failed:", err);
   }
 }
 
-module.exports = sendEmail;
+export default sendEmail;
