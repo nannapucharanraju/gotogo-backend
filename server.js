@@ -9,7 +9,7 @@ const app = express();
 // ✅ FIXED imports
 import sendEmail from "./utils/email.js";
 import fetch from "node-fetch";
-import Vehicle from "./models/Vehicle.js";
+import Vehicle from "./models/vehicle.js";
 
 import cloudinary from "cloudinary";
 import multer from "multer";
