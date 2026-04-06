@@ -35,7 +35,7 @@ const storage = new CloudinaryStorage({
 });
 
 const verificationStorage = new CloudinaryStorage({
-  cloudinary,
+  cloudinary: cloudinaryV2,  // ✅
   params: {
     folder: "gla-gla/verifications",
     allowed_formats: ["jpg", "png", "jpeg", "webp"],
@@ -101,10 +101,32 @@ async function sendNotification(pushToken, title, body) {
 
     const data = await response.json();
 
-    
+    console.log("📡 EXPO RESPONSE:", JSON.stringify(data, null, 2));
+
   } catch (err) {
     console.error("❌ Push error:", err.message);
   }
+}
+
+async function sendBatchNotification(tokens, title, body) {
+  const messages = tokens.map((token) => ({
+    to: token,
+    title,
+    body,
+    sound: "default",
+  }));
+
+  const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(messages),
+  });
+
+  const data = await response.json();
+  return data;
 }
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
@@ -308,29 +330,35 @@ const Booking = mongoose.model("Booking", BookingSchema);
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
-  
+
+  console.log("🔐 AUTH HEADER:", authHeader);
 
   if (!authHeader) {
+    console.log("❌ NO AUTH HEADER");
     return res.status(401).json({ message: "No token provided" });
   }
 
   const token = authHeader.split(" ")[1];
- 
+  console.log("🔑 TOKEN:", token);
 
   if (!token) {
+    console.log("❌ TOKEN FORMAT INVALID");
     return res.status(401).json({ message: "Invalid token format" });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+    console.log("✅ DECODED:", decoded);
+
     req.userId = decoded.userId;
     next();
   } catch (err) {
-    console.log("JWT ERROR:", err.message);
+    console.log("🔥 JWT ERROR:", err.message);
     return res.status(401).json({ message: "Invalid token" });
   }
 }
+
+
 
 app.get("/me", authMiddleware, async (req, res) => {
   const user = await User.findById(req.userId).select("-password");
@@ -370,6 +398,9 @@ function generateCode() {
 
 app.post("/save-token", authMiddleware, async (req, res) => {
   try {
+    
+    console.log("🔥 /save-token HIT");
+console.log("📦 BODY:", req.body);
     const { token } = req.body;
 
     const userId = req.userId; // from middleware
@@ -377,6 +408,14 @@ app.post("/save-token", authMiddleware, async (req, res) => {
     await User.findByIdAndUpdate(userId, {
       pushToken: token,
     });
+
+    const updatedUser = await User.findByIdAndUpdate(
+  userId,
+  { pushToken: token },
+  { new: true }
+);
+
+console.log("💾 SAVED TOKEN:", updatedUser.pushToken);
 
     res.json({ message: "Push token saved" });
   } catch (error) {
@@ -407,34 +446,44 @@ const adminMiddleware = async (req, res, next) => {
   }
 };
 
+
+
+const uploadAny = multer({ storage: verificationStorage });
+
 app.post(
   "/api/verification/upload",
   authMiddleware,
-  verificationUpload.fields([
-    { name: "license", maxCount: 1 },
-    { name: "selfie", maxCount: 1 },
-  ]),
+  uploadAny.any(), // 👈 CHANGE HERE
   async (req, res) => {
     try {
-      const userId = req.userId; // 👈 from token
+      console.log("🔥 VERIFICATION HIT");
+      console.log("📦 FILES:", req.files);
 
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
+      const userId = req.userId;
+
+      if (!req.files || req.files.length < 2) {
+        return res.status(400).json({
+          message: "Both files required",
+        });
       }
 
-      if (!req.files?.license || !req.files?.selfie) {
+      // extract files manually
+      const licenseFile = req.files.find(f => f.fieldname === "license");
+      const selfieFile = req.files.find(f => f.fieldname === "selfie");
+
+      console.log("📄 LICENSE:", licenseFile);
+      console.log("🤳 SELFIE:", selfieFile);
+
+      if (!licenseFile || !selfieFile) {
         return res.status(400).json({
           message: "License and selfie required",
         });
       }
 
-      const licenseUrl = req.files.license[0].path;
-      const selfieUrl = req.files.selfie[0].path;
-
       const verification = new UserVerification({
         userId,
-        licenseUrl,
-        selfieUrl,
+        licenseUrl: licenseFile.path,
+        selfieUrl: selfieFile.path,
         status: "pending",
       });
 
@@ -442,10 +491,10 @@ app.post(
 
       res.json({ message: "Verification uploaded successfully" });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: "Upload failed" });
+      console.error("🔥 FULL ERROR:", err);
+      res.status(500).json({ message: err.message });
     }
-  },
+  }
 );
 
 // passenger sees their own bookings
@@ -827,6 +876,17 @@ app.patch("/bookings/:bookingId/cancel", authMiddleware, async (req, res) => {
   booking.status = "cancelled";
   booking.cancelReason = reason || "No reason given";
   await booking.save();
+
+  
+const ride = await Ride.findById(booking.rideId);
+const driver = await User.findById(ride.createdBy);
+if (driver?.pushToken) {
+  await sendNotification(
+    driver.pushToken,
+    "🚫 Booking Cancelled",
+    `A passenger cancelled their booking. ${booking.seatsBooked} seat(s) are now free.`
+  );
+}
 
   res.json({ message: "Booking cancelled successfully", booking });
 });
@@ -1876,6 +1936,17 @@ app.patch(
 
       await verification.save();
 
+const user = await User.findById(verification.userId);
+if (user?.pushToken) {
+  await sendNotification(
+    user.pushToken,
+    status === "verified" ? "✅ Verification Approved" : "❌ Verification Rejected",
+    status === "verified"
+      ? "You can now post rides on GoToGo!"
+      : `Reason: ${rejectionReason}`
+  );
+}
+
       res.json({ message: "Verification rejected" });
     } catch (err) {
       console.error(err);
@@ -1884,49 +1955,80 @@ app.patch(
   },
 );
 
-app.use((err, req, res, next) => {
-  console.error("GLOBAL ERROR:", err);
 
-  if (err instanceof multer.MulterError) {
+
+
+
+app.post("/admin/send-notification", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { title, body } = req.body;
+
+    if (!title || !body) {
+      return res.status(400).json({ message: "Title and body required" });
+    }
+
+    // filter out empty/null tokens
+    const users = await User.find({
+      pushToken: { $exists: true, $ne: null, $ne: "" },
+    });
+
+    if (!users.length) {
+      return res.json({ message: "No users with push tokens found" });
+    }
+
+    const tokens = users.map((u) => u.pushToken);
+
+    console.log(`📡 Sending to ${tokens.length} users`);
+
+    const data = await sendBatchNotification(tokens, title, body);
+
+    // Expo returns array of receipts, one per token
+    const receipts = data.data || [];
+    const success = receipts.filter((r) => r.status === "ok").length;
+    const failed = receipts.filter((r) => r.status === "error").length;
+
+    console.log(`✅ Success: ${success} | ❌ Failed: ${failed}`);
+
+    res.json({
+      message: "Notifications sent",
+      total: tokens.length,
+      success,
+      failed,
+    });
+  } catch (err) {
+    console.error("BATCH NOTIFICATION ERROR:", err);
+    res.status(500).json({ message: "Failed to send notifications" });
+  }
+});
+
+app.get("/whoami", (req, res) => {
+  res.send("LOCAL SERVER");
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
+app.use((err, req, res, next) => {
+  console.error("🔥 GLOBAL ERROR FULL:", err);
+
+  // 👇 VERY IMPORTANT (multer specific)
+  if (err.name === "MulterError") {
     return res.status(400).json({
+      message: "Multer error",
+      error: err.message,
+    });
+  }
+
+  if (err.message) {
+    return res.status(500).json({
       message: err.message,
     });
   }
 
   res.status(500).json({
-    message: "Something broke",
+    message: "Unknown error",
   });
-});
-
-app.post("/admin/send-notification", async (req, res) => {
-  try {
-    const { title, body } = req.body;
-
-    const users = await User.find({
-      pushToken: { $exists: true, $ne: null },
-    });
-
-    const tokens = users.map((u) => u.pushToken);
-
-    if (!tokens.length) {
-      return res.json({ message: "No users found" });
-    }
-
-    const response = await sendPushNotification(tokens, title, body);
-
-    res.json({
-      message: "Notification sent",
-      success: response.successCount,
-      failed: response.failureCount,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to send notification" });
-  }
-});
-
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
 });
 
 app.listen(PORT, "0.0.0.0", () => {
