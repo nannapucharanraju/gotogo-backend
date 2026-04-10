@@ -1854,6 +1854,17 @@ app.patch(
   },
 );
 
+app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await User.find()
+      .select("-password -emailCode -resetCode")
+      .sort({ _id: -1 });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
+
 app.post("/vehicles", authMiddleware, async (req, res) => {
   try {
     const { type, number, manufacturer, model } = req.body;
