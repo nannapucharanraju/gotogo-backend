@@ -223,6 +223,8 @@ totalPassengerRatings: { type: Number, default: 0 },
     type: Date,
     default: null,
   },
+
+  isActive: { type: Boolean, default: true },
 });
 
 const User = mongoose.model("User", UserSchema);
@@ -1892,6 +1894,27 @@ app.get("/api/admin/stats", authMiddleware, adminMiddleware, async (req, res) =>
     Booking.countDocuments({ status: "cancelled" }),
   ]);
   res.json({ totalRides, totalBookings, activeBookings, cancelledBookings });
+});
+
+// Deactivate user (add isActive field to UserSchema)
+app.patch("/api/admin/users/:id/deactivate", authMiddleware, adminMiddleware, async (req, res) => {
+  await User.findByIdAndUpdate(req.params.id, { isActive: false });
+  res.json({ message: "User deactivated" });
+});
+
+// Reactivate
+app.patch("/api/admin/users/:id/reactivate", authMiddleware, adminMiddleware, async (req, res) => {
+  await User.findByIdAndUpdate(req.params.id, { isActive: true });
+  res.json({ message: "User reactivated" });
+});
+
+// All ratings for admin
+app.get("/api/admin/ratings", authMiddleware, adminMiddleware, async (req, res) => {
+  const ratings = await Rating.find()
+    .populate("fromUserId", "name")
+    .populate("toUserId", "name")
+    .sort({ createdAt: -1 });
+  res.json(ratings);
 });
 
 app.post("/vehicles", authMiddleware, async (req, res) => {
