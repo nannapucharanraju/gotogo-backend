@@ -1865,6 +1865,35 @@ app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req, res) =>
   }
 });
 
+// GET /api/admin/rides — all rides with driver populated
+app.get("/api/admin/rides", authMiddleware, adminMiddleware, async (req, res) => {
+  const rides = await Ride.find()
+    .populate("createdBy", "name phone")
+    .populate("vehicleId")
+    .sort({ createdAt: -1 });
+  res.json(rides);
+});
+
+// GET /api/admin/bookings — all bookings with passenger + ride populated
+app.get("/api/admin/bookings", authMiddleware, adminMiddleware, async (req, res) => {
+  const bookings = await Booking.find()
+    .populate("passengerId", "name phone")
+    .populate({ path: "rideId", populate: { path: "createdBy", select: "name" } })
+    .sort({ createdAt: -1 });
+  res.json(bookings);
+});
+
+// GET /api/admin/stats — dashboard overview numbers
+app.get("/api/admin/stats", authMiddleware, adminMiddleware, async (req, res) => {
+  const [totalRides, totalBookings, activeBookings, cancelledBookings] = await Promise.all([
+    Ride.countDocuments(),
+    Booking.countDocuments(),
+    Booking.countDocuments({ status: "accepted" }),
+    Booking.countDocuments({ status: "cancelled" }),
+  ]);
+  res.json({ totalRides, totalBookings, activeBookings, cancelledBookings });
+});
+
 app.post("/vehicles", authMiddleware, async (req, res) => {
   try {
     const { type, number, manufacturer, model } = req.body;
